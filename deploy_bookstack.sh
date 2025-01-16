@@ -1,13 +1,9 @@
 # !/bin/bash
 
 # deploy_bookstack.sh
-# A script to automate the deployment of BookStack on Ubuntu 24.04 without Docker.
+# A script to automate the deployment of BookStack using Docker and Docker Compose.
 
 set -e
-
-# ===========================
-# Function Definitions
-# ===========================
 
 # Function to prompt for input with a default value
 prompt() {
@@ -17,241 +13,294 @@ prompt() {
     echo "${INPUT:-$DEFAULT_VALUE}"
 }
 
-# Function to log messages
-log() {
-    echo "$1"
-    echo "$1" >> "$LOGPATH"
-}
-
-# Function to handle errors
-error_out() {
-    echo "ERROR: $1" | tee -a "$LOGPATH" 1>&2
-    exit 1
-}
-
-# ===========================
-# Initial Setup
-# ===========================
-
 echo "=== BookStack Deployment Script ==="
 
-# Generate a path for a log file to output into for debugging
-LOGPATH=$(realpath "bookstack_install_$(date +%s).log")
-touch "$LOGPATH"
+# 1. Prompt for necessary variables
+echo "Please provide the following configuration details:"
 
-# Get the current user running the script
-SCRIPT_USER="${SUDO_USER:-$USER}"
+APP_URL="http://localhost"  # Use localhost for local deployment
+MYSQL_ROOT_PASSWORD=$(prompt "MySQL Root Password" "rootpassword")
+MYSQL_DATABASE=$(prompt "MySQL Database Name" "bookstack")
+MYSQL_USER=$(prompt "MySQL Username" "bookstack_user")
+MYSQL_PASSWORD=$(prompt "MySQL User Password" "rxhhyundD(254J#!")
+PMA_PASSWORD=$(prompt "phpMyAdmin Password" "S*26)Q\$H3Dd1Dmp")
 
-# Get the current machine IP address
-CURRENT_IP=$(hostname -I | awk '{print $1}')
+# LDAP variables are skipped as per your request
+LDAP_ENABLED="false"
+LDAP_HOST=""
+LDAP_PORT=""
+LDAP_BASE_DN=""
+LDAP_USERNAME=""
+LDAP_PASSWORD=""
 
-# Set DEBIAN_FRONTEND to noninteractive to prevent prompts
-export DEBIAN_FRONTEND=noninteractive
+# 2. Create .env file
+echo "Creating .env file..."
 
-# ===========================
-# Step 1: System Updates and Dependencies
-# ===========================
+cat > .env <<EOL
+APP_URL="$APP_URL"
+APP_KEY=""
 
-log "Updating system packages..."
-apt update && apt upgrade -y >> "$LOGPATH" 2>&1
+DB_CONNECTION="mysql"
+DB_HOST="db"
+DB_PORT="3306"
+DB_DATABASE="$MYSQL_DATABASE"
+DB_USERNAME="$MYSQL_USER"
+DB_PASSWORD="$MYSQL_PASSWORD"
 
-log "Installing required system packages..."
-apt install -y git unzip apache2 curl mysql-server-8.0 \
-php8.3 php8.3-fpm php8.3-curl php8.3-mbstring php8.3-ldap \
-php8.3-xml php8.3-zip php8.3-gd php8.3-mysql >> "$LOGPATH" 2>&1
+MYSQL_ROOT_PASSWORD="$MYSQL_ROOT_PASSWORD"
 
-# ===========================
-# Step 2: Database Setup
-# ===========================
+PMA_HOST="db"
+PMA_USER="root"
+PMA_PASSWORD="$PMA_PASSWORD"
 
-log "Starting MySQL service..."
-systemctl start mysql.service
-systemctl enable mysql.service
+LDAP_ENABLED="$LDAP_ENABLED"
+LDAP_HOST="$LDAP_HOST"
+LDAP_PORT="$LDAP_PORT"
+LDAP_BASE_DN="$LDAP_BASE_DN"
+LDAP_USERNAME="$LDAP_USERNAME"
+LDAP_PASSWORD="$LDAP_PASSWORD"
 
-# Secure MySQL installation (optional but recommended)
-# You can uncomment and customize the following lines if you want to secure MySQL
-# log "Securing MySQL installation..."
-# mysql_secure_installation >> "$LOGPATH" 2>&1
-
-# Prompt for MySQL Root Password if you have set one, else assume no password
-read -s -p "Enter MySQL root password (leave blank if none): " MYSQL_ROOT_PASSWORD
-echo
-
-# Generate a password for the BookStack database user if not provided
-MYSQL_PASSWORD=$(prompt "Enter MySQL password for BookStack user" "$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 13)")
-
-# Create BookStack database and user
-log "Setting up MySQL database for BookStack..."
-if [ -z "$MYSQL_ROOT_PASSWORD" ]; then
-    mysql -u root <<MYSQL_SCRIPT
-CREATE DATABASE bookstack;
-CREATE USER 'bookstack'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD';
-GRANT ALL PRIVILEGES ON bookstack.* TO 'bookstack'@'localhost';
-FLUSH PRIVILEGES;
-MYSQL_SCRIPT
-else
-    mysql -u root -p"$MYSQL_ROOT_PASSWORD" <<MYSQL_SCRIPT
-CREATE DATABASE bookstack;
-CREATE USER 'bookstack'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD';
-GRANT ALL PRIVILEGES ON bookstack.* TO 'bookstack'@'localhost';
-FLUSH PRIVILEGES;
-MYSQL_SCRIPT
-fi
-
-# ===========================
-# Step 3: Clone BookStack Repository
-# ===========================
-
-# Directory to install BookStack
-BOOKSTACK_DIR="/var/www/bookstack"
-
-# Prompt for your custom BookStack repository URL
-CUSTOM_REPO_URL=$(prompt "Enter your custom BookStack repository URL" "https://github.com/YourUsername/BookStack.git")
-
-log "Cloning BookStack repository from $CUSTOM_REPO_URL..."
-git clone "$CUSTOM_REPO_URL" "$BOOKSTACK_DIR" >> "$LOGPATH" 2>&1
-
-# Navigate to BookStack directory
-cd "$BOOKSTACK_DIR"
-
-# Checkout the desired branch or commit if necessary
-# For example, to checkout the main branch:
-git checkout main >> "$LOGPATH" 2>&1
-
-# ===========================
-# Step 4: Install Composer and PHP Dependencies
-# ===========================
-
-log "Installing Composer..."
-EXPECTED_CHECKSUM="$(php -r 'copy("https://composer.github.io/installer.sig", "php://stdout");')"
-php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
-ACTUAL_CHECKSUM="$(php -r "echo hash_file('sha384', 'composer-setup.php');")"
-
-if [ "$EXPECTED_CHECKSUM" != "$ACTUAL_CHECKSUM" ]; then
-    error_out "Invalid Composer installer checksum"
-fi
-
-php composer-setup.php --quiet >> "$LOGPATH" 2>&1
-rm composer-setup.php
-mv composer.phar /usr/local/bin/composer
-
-log "Installing PHP dependencies with Composer..."
-export COMPOSER_ALLOW_SUPERUSER=1
-composer install --no-dev --optimize-autoloader >> "$LOGPATH" 2>&1
-
-# ===========================
-# Step 5: Configure Environment Variables
-# ===========================
-
-# Prompt for the domain or use IP
-DOMAIN=$(prompt "Enter your domain (or leave blank to use server IP)" "")
-
-if [ -z "$DOMAIN" ]; then
-    DOMAIN="$CURRENT_IP"
-fi
-
-APP_URL="http://$DOMAIN"
-
-# Prompt for additional environment variables if needed
-# For example, you can prompt for mail settings here
-
-log "Configuring environment variables..."
-cp .env.example .env
-sed -i "s@APP_URL=.*@APP_URL=$APP_URL@" .env
-sed -i "s/DB_DATABASE=.*/DB_DATABASE=bookstack/" .env
-sed -i "s/DB_USERNAME=.*/DB_USERNAME=bookstack/" .env
-sed -i "s/DB_PASSWORD=.*/DB_PASSWORD=$MYSQL_PASSWORD/" .env
-
-# Generate the application key
-log "Generating Laravel APP_KEY..."
-php artisan key:generate --no-interaction --force >> "$LOGPATH" 2>&1
-
-# ===========================
-# Step 6: Configure Apache
-# ===========================
-
-log "Configuring Apache for BookStack..."
-
-# Enable necessary Apache modules
-a2enmod rewrite proxy_fcgi setenvif >> "$LOGPATH" 2>&1
-a2enconf php8.3-fpm >> "$LOGPATH" 2>&1
-
-# Create Apache Virtual Host for BookStack
-cat > /etc/apache2/sites-available/bookstack.conf <<EOL
-<VirtualHost *:80>
-    ServerName $DOMAIN
-
-    ServerAdmin webmaster@localhost
-    DocumentRoot $BOOKSTACK_DIR/public
-
-    <Directory $BOOKSTACK_DIR/public>
-        Options -Indexes +FollowSymLinks
-        AllowOverride All
-        Require all granted
-
-        <IfModule mod_rewrite.c>
-            RewriteEngine On
-
-            # Handle Authorization Header
-            RewriteCond %{HTTP:Authorization} .
-            RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
-
-            # Redirect Trailing Slashes If Not A Folder...
-            RewriteCond %{REQUEST_FILENAME} !-d
-            RewriteCond %{REQUEST_URI} (.+)/$
-            RewriteRule ^ %1 [L,R=301]
-
-            # Handle Front Controller...
-            RewriteCond %{REQUEST_FILENAME} !-d
-            RewriteCond %{REQUEST_FILENAME} !-f
-            RewriteRule ^ index.php [L]
-        </IfModule>
-    </Directory>
-
-    ErrorLog \${APACHE_LOG_DIR}/bookstack_error.log
-    CustomLog \${APACHE_LOG_DIR}/bookstack_access.log combined
-</VirtualHost>
+MAIL_DRIVER="smtp"
+MAIL_HOST="mailhog"
+MAIL_PORT="1025"
 EOL
 
-# Disable the default site and enable the BookStack site
-a2dissite 000-default.conf >> "$LOGPATH" 2>&1
-a2ensite bookstack.conf >> "$LOGPATH" 2>&1
+echo ".env file created."
 
-# Test Apache configuration and reload
-apache2ctl configtest >> "$LOGPATH" 2>&1
-systemctl reload apache2 >> "$LOGPATH" 2>&1
+# 3. Create necessary directories
+echo "Setting up directories..."
 
-# ===========================
-# Step 7: Finalize Installation
-# ===========================
+mkdir -p nginx/conf.d
+mkdir -p nginx/log
+mkdir -p certs
+mkdir -p src
 
-log "Running Laravel Artisan commands..."
-php artisan migrate --no-interaction --force >> "$LOGPATH" 2>&1
-php artisan config:cache >> "$LOGPATH" 2>&1
-php artisan route:cache >> "$LOGPATH" 2>&1
-php artisan view:cache >> "$LOGPATH" 2>&1
+echo "Directories are set."
 
-# ===========================
-# Step 8: Set Permissions
-# ===========================
+# 4. Create Nginx configuration
+echo "Creating Nginx configuration..."
 
-log "Setting file and folder permissions..."
-chown -R "$SCRIPT_USER":www-data "$BOOKSTACK_DIR"
-chmod -R 755 "$BOOKSTACK_DIR"
-chmod -R 775 "$BOOKSTACK_DIR/storage" "$BOOKSTACK_DIR/bootstrap/cache" "$BOOKSTACK_DIR/public/uploads"
-chmod 740 "$BOOKSTACK_DIR/.env"
+cat > nginx/conf.d/bookstack.conf <<EOL
+server {
+    listen 80;
+    server_name localhost;
 
-# ===========================
-# Completion Message
-# ===========================
+    location / {
+        proxy_pass http://app:9000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
 
-log "=== Deployment Completed ==="
-log "You can access your BookStack application at: $APP_URL"
-log "Default Admin Credentials (change immediately):"
-log "Email: admin@admin.com"
-log "Password: password"
+    # Uncomment the following block if you decide to enable HTTPS later
+    # listen 443 ssl;
+    # ssl_certificate /etc/nginx/certs/fullchain.pem;
+    # ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    # ssl_protocols TLSv1.2 TLSv1.3;
+    # ssl_ciphers HIGH:!aNULL:!MD5;
+}
+EOL
 
-log "To change the admin credentials, access the application directly or update the database."
+echo "Nginx configuration created."
 
-log "BookStack install path: $BOOKSTACK_DIR"
-log "Install script log: $LOGPATH"
+# 5. Create docker-compose.yml if not present
+if [ ! -f docker-compose.yml ]; then
+    echo "Creating docker-compose.yml..."
+    
+    cat > docker-compose.yml <<EOL
+version: '3.8'
+
+services:
+  app:
+    build: .
+    image: bookstack_app
+    container_name: bookstack_app
+    restart: unless-stopped
+    environment:
+      APP_URL: "\${APP_URL}"
+      DB_HOST: "\${DB_HOST}"
+      DB_PORT: "\${DB_PORT}"
+      DB_DATABASE: "\${DB_DATABASE}"
+      DB_USERNAME: "\${DB_USERNAME}"
+      DB_PASSWORD: "\${DB_PASSWORD}"
+      APP_KEY: "\${APP_KEY}"
+    volumes:
+      - ./src:/var/www/html
+      - ./php.ini:/usr/local/etc/php/conf.d/custom.ini
+    networks:
+      - bookstack_network
+
+  db:
+    image: mysql:8.0
+    container_name: bookstack_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: "\${MYSQL_ROOT_PASSWORD}"
+      MYSQL_DATABASE: "\${MYSQL_DATABASE}"
+      MYSQL_USER: "\${MYSQL_USER}"
+      MYSQL_PASSWORD: "\${MYSQL_PASSWORD}"
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - bookstack_network
+
+  nginx:
+    image: nginx:latest
+    container_name: bookstack_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      # - "443:443"  # Uncomment if you enable HTTPS
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./certs:/etc/nginx/certs
+      - ./src:/var/www/html
+    networks:
+      - bookstack_network
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: bookstack_phpmyadmin
+    restart: unless-stopped
+    environment:
+      PMA_HOST: "\${PMA_HOST}"
+      PMA_USER: "\${PMA_USER}"
+      PMA_PASSWORD: "\${PMA_PASSWORD}"
+    ports:
+      - "8080:80"
+    networks:
+      - bookstack_network
+
+  mailhog:
+    image: mailhog/mailhog
+    container_name: bookstack_mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - bookstack_network
+
+networks:
+  bookstack_network:
+    driver: bridge
+
+volumes:
+  db_data:
+EOL
+
+    echo "docker-compose.yml created."
+else
+    echo "docker-compose.yml already exists. Skipping creation."
+fi
+
+# 6. Create Dockerfile if not present
+if [ ! -f Dockerfile ]; then
+    echo "Creating Dockerfile..."
+
+    cat > Dockerfile <<EOL
+FROM php:8.1-fpm
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    libonig-dev \
+    libxml2-dev \
+    libldap2-dev \
+    libexif-dev \
+    libfreetype6-dev \
+    libjpeg62-turbo-dev \
+    libpng-dev \
+    unzip \
+    git \
+    curl \
+    libzip-dev \
+    zip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PHP extensions
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip ldap
+
+# Install Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Set working directory
+WORKDIR /var/www/html
+
+# Copy existing application directory contents
+COPY . /var/www/html
+
+# Install PHP dependencies
+RUN composer install --no-dev --optimize-autoloader
+
+# Set permissions
+RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
+
+# Expose port 9000 and start php-fpm server
+EXPOSE 9000
+CMD ["php-fpm"]
+EOL
+
+    echo "Dockerfile created."
+else
+    echo "Dockerfile already exists. Skipping creation."
+fi
+
+# 7. Create php.ini
+echo "Creating php.ini..."
+
+cat > php.ini <<EOL
+memory_limit = 256M
+upload_max_filesize = 50M
+post_max_size = 50M
+max_execution_time = 300
+EOL
+
+echo "php.ini created."
+
+# 8. Set Permissions
+echo "Setting file permissions..."
+
+chown -R "$USER":"$USER" src
+chmod -R 755 src
+
+echo "Permissions set."
+
+# 9. Build and Start Docker Containers
+echo "Building and starting Docker containers..."
+
+docker-compose up --build -d
+
+echo "Docker containers are up and running."
+
+# 10. Generate Laravel APP_KEY
+echo "Generating Laravel APP_KEY..."
+
+APP_KEY=$(docker-compose exec app php artisan key:generate --show)
+sed -i "s/^APP_KEY=.*/APP_KEY=$APP_KEY/" .env
+docker-compose restart app
+
+echo "Laravel APP_KEY generated and updated in .env."
+
+# 11. Run Laravel Artisan Commands
+echo "Running Laravel Artisan commands..."
+
+docker-compose exec app php artisan migrate --force
+docker-compose exec app php artisan config:cache
+docker-compose exec app php artisan route:cache
+docker-compose exec app php artisan view:cache
+
+echo "Laravel Artisan commands executed."
+
+# 12. Final Instructions
+echo "=== Deployment Completed ==="
+echo "You can access your BookStack application at: $APP_URL"
+echo "phpMyAdmin is available at: http://localhost:8080"
+echo "Default Admin Credentials (change immediately):"
+echo "Email: admin@admin.com"
+echo "Password: password"
+
+echo "To change the admin credentials, access the phpMyAdmin interface or run Laravel commands within the container."
+
+echo "Note: If you decide to enable HTTPS later, ensure to update the Nginx configuration and regenerate SSL certificates accordingly."
