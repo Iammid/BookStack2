@@ -18,7 +18,7 @@ echo "=== BookStack Deployment Script ==="
 # 1. Prompt for necessary variables
 echo "Please provide the following configuration details:"
 
-STATIC_IP=$(prompt "Server Static IP Address (e.grm -., 192.168.1.100)" "YOUR_STATIC_IP")
+STATIC_IP=$(prompt "Server Static IP Address (e.g., 172.16.1.146)" "172.16.1.146")
 APP_URL="https://$STATIC_IP"
 MYSQL_ROOT_PASSWORD=$(prompt "MySQL Root Password" "rootpassword")
 MYSQL_DATABASE=$(prompt "MySQL Database Name" "bookstack")
@@ -177,9 +177,20 @@ echo "Organizing codebase..."
 if [ -z "$(ls -A src)" ]; then
     echo "Moving application files to src directory..."
     # Exclude script, docker-compose.yml, Dockerfile, README.md, .env, nginx, certs
-    shopt -s extglob
-    mv !(deploy_bookstack.sh|docker-compose.yml|Dockerfile|README.md|.env|nginx|certs) src/ || echo "No files to move or already moved."
-    shopt -u extglob
+    for file in *; do
+        case "$file" in
+            deploy_bookstack.sh|docker-compose.yml|Dockerfile|README.md|.env|nginx|certs)
+                continue
+                ;;
+            *)
+                if [ -d "$file" ]; then
+                    mv "$file" src/
+                elif [ -f "$file" ]; then
+                    mv "$file" src/
+                fi
+                ;;
+        esac
+    done
 else
     echo "src directory already contains files. Skipping move."
 fi
@@ -252,15 +263,16 @@ echo "Docker containers are up and running."
 # 12. Generate Laravel APP_KEY
 echo "Generating Laravel APP_KEY..."
 
-docker-compose exec app php artisan key:generate --force
-
-echo "Laravel APP_KEY generated."
+# Generate the key and capture it
+APP_KEY=$(docker-compose exec app php artisan key:generate --show | awk '{print $NF}')
 
 # Update .env with the generated APP_KEY
-APP_KEY=$(docker-compose exec app php artisan key:generate --show)
 sed -i "s/^APP_KEY=.*/APP_KEY=$APP_KEY/" .env
 
-echo "Updated .env with APP_KEY."
+# Set the APP_KEY inside the container
+docker-compose exec app bash -c "echo 'APP_KEY=$APP_KEY' >> .env"
+
+echo "Laravel APP_KEY generated and updated in .env."
 
 # 13. Run Laravel Artisan Commands
 echo "Running Laravel Artisan commands..."
@@ -283,4 +295,3 @@ echo "Password: password"
 echo "To change the admin credentials, access the phpMyAdmin interface or run Laravel commands within the container."
 
 echo "Note: Since SSL is set up with a self-signed certificate, your browser may show a security warning. You can proceed by accepting the risk or set up a proper domain and SSL certificate when available."
-
