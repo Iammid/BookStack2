@@ -1,4 +1,4 @@
-# !/bin/bash
+#!/bin/bash
 
 # deploy_bookstack.sh
 # A script to automate the deployment of BookStack using Docker and Docker Compose.
@@ -18,8 +18,7 @@ echo "=== BookStack Deployment Script ==="
 # 1. Prompt for necessary variables
 echo "Please provide the following configuration details:"
 
-STATIC_IP=$(prompt "Server Static IP Address (e.g., 172.16.1.146)" "172.16.1.146")
-APP_URL="http://$STATIC_IP"  # Using HTTP initially; you can switch to HTTPS later
+APP_URL="http://localhost"  # Use localhost for local deployment
 MYSQL_ROOT_PASSWORD=$(prompt "MySQL Root Password" "rootpassword")
 MYSQL_DATABASE=$(prompt "MySQL Database Name" "bookstack")
 MYSQL_USER=$(prompt "MySQL Username" "bookstack_user")
@@ -84,7 +83,7 @@ echo "Creating Nginx configuration..."
 cat > nginx/conf.d/bookstack.conf <<EOL
 server {
     listen 80;
-    server_name $STATIC_IP;
+    server_name localhost;
 
     location / {
         proxy_pass http://app:9000;
@@ -260,51 +259,31 @@ EOL
 
 echo "php.ini created."
 
-# 8. (Optional) Generate Self-Signed SSL Certificates
-# Commented out since we're using HTTP initially. Uncomment if you wish to use HTTPS now.
-# echo "Generating self-signed SSL certificates..."
-
-# if [ ! -f certs/fullchain.pem ] || [ ! -f certs/privkey.pem ]; then
-#     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-#         -keyout certs/privkey.pem \
-#         -out certs/fullchain.pem \
-#         -subj "/C=US/ST=State/L=City/O=Organization/OU=Department/CN=$STATIC_IP"
-#     echo "Self-signed SSL certificates generated."
-# else
-#     echo "SSL certificates already exist. Skipping generation."
-# fi
-
-# 9. Set Permissions
+# 8. Set Permissions
 echo "Setting file permissions..."
 
-# Ensure the script is run with sufficient permissions or adjust as needed
 chown -R "$USER":"$USER" src
 chmod -R 755 src
 
 echo "Permissions set."
 
-# 10. Build and Start Docker Containers
+# 9. Build and Start Docker Containers
 echo "Building and starting Docker containers..."
 
 docker-compose up --build -d
 
 echo "Docker containers are up and running."
 
-# 11. Generate Laravel APP_KEY
+# 10. Generate Laravel APP_KEY
 echo "Generating Laravel APP_KEY..."
 
-# Generate the key and capture it
 APP_KEY=$(docker-compose exec app php artisan key:generate --show)
-
-# Update .env with the generated APP_KEY
 sed -i "s/^APP_KEY=.*/APP_KEY=$APP_KEY/" .env
-
-# Restart the app container to apply the APP_KEY
 docker-compose restart app
 
 echo "Laravel APP_KEY generated and updated in .env."
 
-# 12. Run Laravel Artisan Commands
+# 11. Run Laravel Artisan Commands
 echo "Running Laravel Artisan commands..."
 
 docker-compose exec app php artisan migrate --force
@@ -314,10 +293,10 @@ docker-compose exec app php artisan view:cache
 
 echo "Laravel Artisan commands executed."
 
-# 13. Final Instructions
+# 12. Final Instructions
 echo "=== Deployment Completed ==="
 echo "You can access your BookStack application at: $APP_URL"
-echo "phpMyAdmin is available at: http://$STATIC_IP:8080"
+echo "phpMyAdmin is available at: http://localhost:8080"
 echo "Default Admin Credentials (change immediately):"
 echo "Email: admin@admin.com"
 echo "Password: password"
