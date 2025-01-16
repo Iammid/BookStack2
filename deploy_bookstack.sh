@@ -38,28 +38,28 @@ LDAP_PASSWORD=""
 echo "Creating .env file..."
 
 cat > .env <<EOL
-APP_URL=$APP_URL
+APP_URL='$APP_URL'
 APP_KEY=
 
 DB_CONNECTION=mysql
 DB_HOST=db
 DB_PORT=3306
-DB_DATABASE=$MYSQL_DATABASE
-DB_USERNAME=$MYSQL_USER
-DB_PASSWORD=$MYSQL_PASSWORD
+DB_DATABASE='$MYSQL_DATABASE'
+DB_USERNAME='$MYSQL_USER'
+DB_PASSWORD='$MYSQL_PASSWORD'
 
-MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
+MYSQL_ROOT_PASSWORD='$MYSQL_ROOT_PASSWORD'
 
 PMA_HOST=db
 PMA_USER=root
-PMA_PASSWORD=$PMA_PASSWORD
+PMA_PASSWORD='$PMA_PASSWORD'
 
-LDAP_ENABLED=$LDAP_ENABLED
-LDAP_HOST=$LDAP_HOST
-LDAP_PORT=$LDAP_PORT
-LDAP_BASE_DN=$LDAP_BASE_DN
-LDAP_USERNAME=$LDAP_USERNAME
-LDAP_PASSWORD=$LDAP_PASSWORD
+LDAP_ENABLED='$LDAP_ENABLED'
+LDAP_HOST='$LDAP_HOST'
+LDAP_PORT='$LDAP_PORT'
+LDAP_BASE_DN='$LDAP_BASE_DN'
+LDAP_USERNAME='$LDAP_USERNAME'
+LDAP_PASSWORD='$LDAP_PASSWORD'
 
 MAIL_DRIVER=smtp
 MAIL_HOST=mailhog
@@ -123,7 +123,98 @@ EOL
 
 echo "Nginx configuration created."
 
-# 5. Create Dockerfile if not present
+# 5. Create docker-compose.yml if not present
+if [ ! -f docker-compose.yml ]; then
+    echo "Creating docker-compose.yml..."
+    
+    cat > docker-compose.yml <<EOL
+version: '3.8'
+
+services:
+  app:
+    build: .
+    image: bookstack_app
+    container_name: bookstack_app
+    restart: unless-stopped
+    environment:
+      - APP_URL=\${APP_URL}
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_DATABASE=\${DB_DATABASE}
+      - DB_USERNAME=\${DB_USERNAME}
+      - DB_PASSWORD=\${DB_PASSWORD}
+      - APP_KEY=\${APP_KEY}
+    volumes:
+      - ./src:/var/www/html
+      - ./php.ini:/usr/local/etc/php/conf.d/custom.ini
+    networks:
+      - bookstack_network
+
+  db:
+    image: mysql:8.0
+    container_name: bookstack_db
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=\${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE=\${MYSQL_DATABASE}
+      - MYSQL_USER=\${MYSQL_USER}
+      - MYSQL_PASSWORD=\${MYSQL_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - bookstack_network
+
+  nginx:
+    image: nginx:latest
+    container_name: bookstack_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./certs:/etc/nginx/certs
+      - ./src:/var/www/html
+    networks:
+      - bookstack_network
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: bookstack_phpmyadmin
+    restart: unless-stopped
+    environment:
+      - PMA_HOST=db
+      - PMA_USER=root
+      - PMA_PASSWORD=\${PMA_PASSWORD}
+    ports:
+      - "8080:80"
+    networks:
+      - bookstack_network
+
+  mailhog:
+    image: mailhog/mailhog
+    container_name: bookstack_mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - bookstack_network
+
+networks:
+  bookstack_network:
+    driver: bridge
+
+volumes:
+  db_data:
+EOL
+
+    echo "docker-compose.yml created."
+else
+    echo "docker-compose.yml already exists. Skipping creation."
+fi
+
+# 6. Create Dockerfile if not present
 if [ ! -f Dockerfile ]; then
     echo "Creating Dockerfile..."
 
@@ -170,56 +261,7 @@ else
     echo "Dockerfile already exists. Skipping creation."
 fi
 
-# 6. Organize Codebase
-# echo "Organizing codebase..."
-
-# Check if src directory is empty
-# if [ -z "$(ls -A src)" ]; then
-#    echo "Moving application files to src directory..."
-    # Exclude script, docker-compose.yml, Dockerfile, README.md, .env, nginx, certs
-#    for file in *; do
-#        case "$file" in
-#            deploy_bookstack.sh|docker-compose.yml|Dockerfile|README.md|.env|nginx|certs)
-#                continue
-#                ;;
-#            *)
-#                if [ -d "$file" ]; then
-#                    mv "$file" src/
-#                elif [ -f "$file" ]; then
-#                    mv "$file" src/
-#                fi
-#                ;;
-#        esac
-#    done
-# else
-#    echo "src directory already contains files. Skipping move."
-# fi
-
-# echo "Codebase organized."
-
-# 7. Create Apache Configuration (if needed)
-# Since we're using Nginx as the reverse proxy and PHP-FPM, Apache is not required.
-# If Apache is needed for specific purposes, uncomment the following section.
-
-# echo "Creating Apache configuration..."
-# cat > apache-config.conf <<EOL
-# <VirtualHost *:80>
-#     ServerAdmin admin@yourdomain.com
-#     DocumentRoot /var/www/html/public
-
-#     <Directory /var/www/html/public>
-#         Options Indexes FollowSymLinks
-#         AllowOverride All
-#         Require all granted
-#     </Directory>
-
-#     ErrorLog \${APACHE_LOG_DIR}/error.log
-#     CustomLog \${APACHE_LOG_DIR}/access.log combined
-# </VirtualHost>
-# EOL
-# echo "Apache configuration created."
-
-# 8. Create php.ini
+# 7. Create php.ini
 echo "Creating php.ini..."
 
 cat > php.ini <<EOL
@@ -231,7 +273,7 @@ EOL
 
 echo "php.ini created."
 
-# 9. Generate Self-Signed SSL Certificates
+# 8. Generate Self-Signed SSL Certificates
 echo "Generating self-signed SSL certificates..."
 
 # Check if certificates already exist
@@ -245,36 +287,37 @@ else
     echo "SSL certificates already exist. Skipping generation."
 fi
 
-# 10. Set Permissions
+# 9. Set Permissions
 echo "Setting file permissions..."
 
-sudo chown -R $USER:$USER src
-sudo chmod -R 755 src
+# Ensure the script is run with sufficient permissions or adjust as needed
+chown -R "$USER":"$USER" src
+chmod -R 755 src
 
 echo "Permissions set."
 
-# 11. Build and Start Docker Containers
+# 10. Build and Start Docker Containers
 echo "Building and starting Docker containers..."
 
 docker-compose up --build -d
 
 echo "Docker containers are up and running."
 
-# 12. Generate Laravel APP_KEY
+# 11. Generate Laravel APP_KEY
 echo "Generating Laravel APP_KEY..."
 
 # Generate the key and capture it
-APP_KEY=$(docker-compose exec app php artisan key:generate --show | awk '{print $NF}')
+APP_KEY=$(docker-compose exec app php artisan key:generate --show)
 
 # Update .env with the generated APP_KEY
-sed -i "s/^APP_KEY=.*/APP_KEY=$APP_KEY/" .env
+sed -i "s/^APP_KEY=.*/APP_KEY='$APP_KEY'/" .env
 
-# Set the APP_KEY inside the container
-docker-compose exec app bash -c "echo 'APP_KEY=$APP_KEY' >> .env"
+# Optionally, ensure the container has the updated APP_KEY
+docker-compose exec app bash -c "echo \"APP_KEY='$APP_KEY'\" >> .env"
 
 echo "Laravel APP_KEY generated and updated in .env."
 
-# 13. Run Laravel Artisan Commands
+# 12. Run Laravel Artisan Commands
 echo "Running Laravel Artisan commands..."
 
 docker-compose exec app php artisan migrate --force
@@ -284,7 +327,7 @@ docker-compose exec app php artisan view:cache
 
 echo "Laravel Artisan commands executed."
 
-# 14. Final Instructions
+# 13. Final Instructions
 echo "=== Deployment Completed ==="
 echo "You can access your BookStack application at: $APP_URL"
 echo "phpMyAdmin is available at: http://$STATIC_IP:8080"
