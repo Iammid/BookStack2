@@ -171,31 +171,31 @@ else
 fi
 
 # 6. Organize Codebase
-echo "Organizing codebase..."
+# echo "Organizing codebase..."
 
 # Check if src directory is empty
-if [ -z "$(ls -A src)" ]; then
-    echo "Moving application files to src directory..."
+# if [ -z "$(ls -A src)" ]; then
+#    echo "Moving application files to src directory..."
     # Exclude script, docker-compose.yml, Dockerfile, README.md, .env, nginx, certs
-    for file in *; do
-        case "$file" in
-            deploy_bookstack.sh|docker-compose.yml|Dockerfile|README.md|.env|nginx|certs)
-                continue
-                ;;
-            *)
-                if [ -d "$file" ]; then
-                    mv "$file" src/
-                elif [ -f "$file" ]; then
-                    mv "$file" src/
-                fi
-                ;;
-        esac
-    done
-else
-    echo "src directory already contains files. Skipping move."
-fi
+#    for file in *; do
+#        case "$file" in
+#            deploy_bookstack.sh|docker-compose.yml|Dockerfile|README.md|.env|nginx|certs)
+#                continue
+#                ;;
+#            *)
+#                if [ -d "$file" ]; then
+#                    mv "$file" src/
+#                elif [ -f "$file" ]; then
+#                    mv "$file" src/
+#                fi
+#                ;;
+#        esac
+#    done
+# else
+#    echo "src directory already contains files. Skipping move."
+# fi
 
-echo "Codebase organized."
+# echo "Codebase organized."
 
 # 7. Create Apache Configuration (if needed)
 # Since we're using Nginx as the reverse proxy and PHP-FPM, Apache is not required.
