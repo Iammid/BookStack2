@@ -214,7 +214,7 @@ else
     echo "docker-compose.yml already exists. Skipping creation."
 fi
 
-# 6. Create Dockerfile if not present
+# 5. Create Dockerfile if not present
 if [ ! -f Dockerfile ]; then
     echo "Creating Dockerfile..."
 
@@ -226,15 +226,21 @@ RUN apt-get update && apt-get install -y \\
     libonig-dev \\
     libxml2-dev \\
     libldap2-dev \\
+    libexif-dev \\
+    libfreetype6-dev \\
+    libjpeg62-turbo-dev \\
+    libpng-dev \\
     unzip \\
     git \\
     curl \\
     libzip-dev \\
     zip \\
-    openssl
+    openssl \\
+    && rm -rf /var/lib/apt/lists/*
 
 # Install PHP extensions
-RUN docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip ldap
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg \\
+    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip ldap
 
 # Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
@@ -260,6 +266,7 @@ EOL
 else
     echo "Dockerfile already exists. Skipping creation."
 fi
+
 
 # 7. Create php.ini
 echo "Creating php.ini..."
